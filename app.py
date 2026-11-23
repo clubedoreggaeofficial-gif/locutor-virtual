@@ -56,13 +56,8 @@ def definir_locutora_e_roteiro(musica):
             ]
             return voz, random.choice(frases), "Ana Rasta - Conexão Jamaica"
 
-    # Programação normal (outros horários e fins de semana) -> Maya Roots (Francisca)
-    voz = "pt-BR-FranciscaNeural"
-    frases = [
-        f"Você está ouvindo a Clube do Reggae com Maya Roots! Rolou agora {musica}. Continue curtindo a nossa programação!",
-        f"Clube do Reggae, o som que conecta você! Aqui é Maya Roots e você ouviu {musica}. Fique sintonizado!"
-    ]
-    return voz, random.choice(frases), "Maya Roots - Programação Geral"
+    # Fora desses horários -> Retorna None para não gerar locução
+    return None, None, None
 
 async def criar_audio(texto, voz, arquivo_saida):
     communicate = edge_tts.Communicate(texto, voz)
@@ -75,6 +70,15 @@ def enviar_ftp(arquivo_local, nome_remoto):
         with open(arquivo_local, "rb") as f:
             ftp.storbinary(f"STOR {nome_remoto}", f)
 
+def limpar_ftp(nome_remoto):
+    with ftplib.FTP(FTP_HOST) as ftp:
+        ftp.login(FTP_USER, FTP_PASS)
+        ftp.cwd("locutor")
+        try:
+            ftp.delete(nome_remoto)
+        except Exception:
+            pass
+
 @app.route("/")
 def home():
     return "Locutoras Virtuais Clube do Reggae Online!"
@@ -83,8 +87,13 @@ def home():
 def gerar_locucao():
     musica = pegar_musica_atual()
     voz, roteiro, programa = definir_locutora_e_roteiro(musica)
-    
     arquivo_mp3 = "locucao_atual.mp3"
+    
+    # Se estiver fora do horário dos programas, apaga o áudio do FTP e não fala nada
+    if voz is None:
+        limpar_ftp(arquivo_mp3)
+        return "Fora do horário dos programas (12h às 19h Seg-Sex). Pasta locutor limpa!"
+    
     asyncio.run(criar_audio(roteiro, voz, arquivo_mp3))
     enviar_ftp(arquivo_mp3, arquivo_mp3)
     
