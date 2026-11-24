@@ -24,11 +24,18 @@ def pegar_ultimas_musicas():
         
         linhas = re.findall(r'<tr><td>(.*?)</td><td>(.*?)</td>', resp.text)
         musicas = []
+        palavras_ignoradas = ["locucao", "maya_", "vinheta", "vns", "sr -", "comercial"]
+        
         for hora_t, titulo in linhas:
             titulo_limpo = re.sub('<[^<]+?>', '', titulo).strip()
-            if titulo_limpo and "locucao" not in titulo_limpo.lower() and "vinheta" not in titulo_limpo.lower():
-                if titulo_limpo not in musicas:
-                    musicas.append(titulo_limpo)
+            titulo_minusculo = titulo_limpo.lower()
+            
+            # Pula se estiver vazio ou se for vinheta/locução
+            if not titulo_limpo or any(p in titulo_minusculo for p in palavras_ignoradas):
+                continue
+                
+            if titulo_limpo not in musicas:
+                musicas.append(titulo_limpo)
             if len(musicas) == 3:
                 break
                 
@@ -61,7 +68,7 @@ def atualizar_ftp(arquivo_local, nome_novo):
     ftp.set_pasv(True)
     ftp.cwd("locutor")
     
-    # Apaga qualquer áudio antigo da pasta para o AutoDJ não repetir fala velha
+    # Apaga qualquer áudio antigo da pasta para o AutoDJ nunca repetir fala velha
     for arq in ftp.nlst():
         if arq.endswith(".mp3"):
             try:
