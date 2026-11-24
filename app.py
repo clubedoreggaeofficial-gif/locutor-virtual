@@ -15,89 +15,104 @@ FTP_HOST = os.environ.get("FTP_HOST")
 FTP_USER = os.environ.get("FTP_USER")
 FTP_PASS = os.environ.get("FTP_PASS")
 
-def pegar_musica_atual():
+def pegar_ultimas_musicas():
     try:
+        base_url = STREAM_URL.rsplit("/", 1)
+        played_url = f"{base_url}/played.html"
         headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(STREAM_URL, headers=headers, timeout=10)
+        resp = requests.get(played_url, headers=headers, timeout=10)
+        
+        linhas = re.findall(r'<tr><td>(.*?)</td><td>(.*?)</td>', resp.text)
+        musicas = []
+        for hora_t, titulo in linhas:
+            titulo_limpo = re.sub('<[^<]+?>', '', titulo).strip()
+            if titulo_limpo and "locucao" not in titulo_limpo.lower() and "vinheta" not in titulo_limpo.lower():
+                if titulo_limpo not in musicas:
+                    musicas.append(titulo_limpo)
+            if len(musicas) == 3:
+                break
+                
+        if len(musicas) >= 3:
+            return f"{musicas}, {musicas} e {musicas}"
+        elif len(musicas) == 2:
+            return f"{musicas} e {musicas}"
+        elif len(musicas) == 1:
+            return musicas
+    except Exception as e:
+        print(f"Erro ao ler histórico: {e}")
+
+    try:
+        resp = requests.get(STREAM_URL, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         limpo = re.sub('<[^<]+?>', '', resp.text).strip()
         partes = limpo.split(",")
         musica = ",".join(partes[6:]).strip()
         return musica if musica else "a nossa seleção especial"
-    except Exception as e:
-        print(f"Erro ao ler stream: {e}")
+    except Exception:
         return "o melhor do reggae"
-
-def definir_locutora_e_roteiro(musica):
-    # Horário oficial de Brasília (UTC-3)
-    fuso_brasilia = timezone(timedelta(hours=-3))
-    agora = datetime.now(fuso_brasilia)
-    dia_semana = agora.weekday() # 0=Segunda, 1=Terça, 2=Quarta, 3=Quinta, 4=Sexta, 5=Sábado, 6=Domingo
-    hora = agora.hour
-
-    # Segunda a Sexta (0 a 4)
-    if dia_semana <= 4:
-        # Das 12h às 16h59 -> Programa Disco Reggae com Maya Roots (Francisca)
-        if 12 <= hora < 17:
-            voz = "pt-BR-FranciscaNeural"
-            frases = [
-                f"Aqui é Maya Roots no Disco Reggae, pela Clube do Reggae! Acabamos de curtir {musica}, e a sequência não para!",
-                f"Você está no programa Disco Reggae com Maya Roots, na Clube do Reggae! Rolou agora {musica}. Continue sintonizado com a gente!",
-                f"Disco Reggae no ar pela Clube do Reggae! Eu sou Maya Roots e você acabou de ouvir {musica}. Fique ligado!"
-            ]
-            return voz, random.choice(frases), "Maya Roots - Disco Reggae"
-
-        # Das 17h às 18h59 -> Programa Conexão Jamaica com Ana Rasta (Thalita)
-        elif 17 <= hora < 19:
-            voz = "pt-BR-ThalitaNeural"
-            frases = [
-                f"Aqui é Ana Rasta no Conexão Jamaica, na Clube do Reggae! Rolou {musica} e tem muito mais som pesado vindo aí!",
-                f"Conexão Jamaica no ar com Ana Rasta, pela Clube do Reggae! Você acabou de ouvir {musica}. Não saia daí!",
-                f"Aqui na Clube do Reggae você curte o Conexão Jamaica com Ana Rasta! Passou por aqui {musica}. Continue com a gente!"
-            ]
-            return voz, random.choice(frases), "Ana Rasta - Conexão Jamaica"
-
-    # Fora desses horários -> Retorna None para não gerar locução
-    return None, None, None
 
 async def criar_audio(texto, voz, arquivo_saida):
     communicate = edge_tts.Communicate(texto, voz)
     await communicate.save(arquivo_saida)
 
-def enviar_ftp(arquivo_local, nome_remoto):
-    with ftplib.FTP(FTP_HOST) as ftp:
-        ftp.login(FTP_USER, FTP_PASS)
-        ftp.cwd("locutor")
+def atualizar_ftp(arquivo_local, nome_novo):
+    ftp = ftplib.FTP()
+    ftp.connect(FTP_HOST, 21, timeout=15)
+    ftp.login(FTP_USER, FTP_PASS)
+    ftp.set_pasv(True)
+    ftp.cwd("locutor")
+    
+    # Apaga qualquer áudio antigo da pasta para o AutoDJ não repetir fala velha
+    for arq in ftp.nlst():
+        if arq.endswith(".mp3"):
+            try:
+                ftp.delete(arq)
+            except Exception:
+                pass
+                
+    if arquivo_local and nome_novo:
         with open(arquivo_local, "rb") as f:
-            ftp.storbinary(f"STOR {nome_remoto}", f)
-
-def limpar_ftp(nome_remoto):
-    with ftplib.FTP(FTP_HOST) as ftp:
-        ftp.login(FTP_USER, FTP_PASS)
-        ftp.cwd("locutor")
-        try:
-            ftp.delete(nome_remoto)
-        except Exception:
-            pass
+            ftp.storbinary(f"STOR {nome_novo}", f)
+    ftp.quit()
 
 @app.route("/")
 def home():
-    return "Locutoras Virtuais Clube do Reggae Online!"
+    return "Maya Roots Online!"
 
 @app.route("/gerar")
 def gerar_locucao():
-    musica = pegar_musica_atual()
-    voz, roteiro, programa = definir_locutora_e_roteiro(musica)
-    arquivo_mp3 = "locucao_atual.mp3"
-    
-    # Se estiver fora do horário dos programas, apaga o áudio do FTP e não fala nada
-    if voz is None:
-        limpar_ftp(arquivo_mp3)
-        return "Fora do horário dos programas (12h às 19h Seg-Sex). Pasta locutor limpa!"
-    
-    asyncio.run(criar_audio(roteiro, voz, arquivo_mp3))
-    enviar_ftp(arquivo_mp3, arquivo_mp3)
-    
-    return f"Sucesso! [{programa}] Locução gerada para: {musica}"
+    fuso_brasilia = timezone(timedelta(hours=-3))
+    agora = datetime.now(fuso_brasilia)
+    dia_semana = agora.weekday() # 0=Seg a 4=Sex
+    hora = agora.hour
+
+    # Somente Segunda a Sexta, das 12h às 16h59 (Programa Disco Reggae)
+    if dia_semana <= 4 and (12 <= hora < 17):
+        sequencia = pegar_ultimas_musicas()
+        voz = "pt-BR-FranciscaNeural"
+        frases = [
+            f"Aqui é Maya Roots no Disco Reggae, pela Clube do Reggae! Você curtiu na nossa sequência: {sequencia}. E o som não para!",
+            f"Você está no Disco Reggae com Maya Roots, na Clube do Reggae! Passaram por aqui: {sequencia}. Continue sintonizado!",
+            f"Disco Reggae no ar pela Clube do Reggae! Eu sou Maya Roots e você acabou de ouvir: {sequencia}. Fique ligado!"
+        ]
+        roteiro = random.choice(frases)
+        
+        carimbo = agora.strftime("%H%M%S")
+        arquivo_mp3 = f"maya_{carimbo}.mp3"
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(criar_audio(roteiro, voz, arquivo_mp3))
+        loop.close()
+        
+        atualizar_ftp(arquivo_mp3, arquivo_mp3)
+        if os.path.exists(arquivo_mp3):
+            os.remove(arquivo_mp3)
+            
+        return f"Sucesso! [Maya Roots - Disco Reggae] Sequência lida: {sequencia}"
+
+    # Fora do horário da Maya Roots -> limpa a pasta e fica em silêncio
+    atualizar_ftp(None, None)
+    return "Fora do horário da Maya Roots (12h às 17h Seg-Sex). Pasta limpa!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
