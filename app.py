@@ -1,61 +1,45 @@
 import os
-import re
 import random
 import asyncio
 import ftplib
-import requests
 import edge_tts
 from datetime import datetime, timezone, timedelta
 from flask import Flask
 
 app = Flask(__name__)
 
-STREAM_URL = os.environ.get("STREAM_URL")
 FTP_HOST = os.environ.get("FTP_HOST")
 FTP_USER = os.environ.get("FTP_USER")
 FTP_PASS = os.environ.get("FTP_PASS")
 
-def pegar_ultimas_musicas():
-    try:
-        base_url = STREAM_URL.rsplit("/", 1)
-        played_url = f"{base_url}/played.html"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        resp = requests.get(played_url, headers=headers, timeout=10)
-        
-        linhas = re.findall(r'<tr><td>(.*?)</td><td>(.*?)</td>', resp.text)
-        musicas = []
-        palavras_ignoradas = ["locucao", "maya_", "vinheta", "vns", "sr -", "comercial"]
-        
-        for hora_t, titulo in linhas:
-            titulo_limpo = re.sub('<[^<]+?>', '', titulo).strip()
-            titulo_minusculo = titulo_limpo.lower()
-            
-            # Pula se estiver vazio ou se for vinheta/locução
-            if not titulo_limpo or any(p in titulo_minusculo for p in palavras_ignoradas):
-                continue
-                
-            if titulo_limpo not in musicas:
-                musicas.append(titulo_limpo)
-            if len(musicas) == 3:
-                break
-                
-        if len(musicas) >= 3:
-            return f"{musicas}, {musicas} e {musicas}"
-        elif len(musicas) == 2:
-            return f"{musicas} e {musicas}"
-        elif len(musicas) == 1:
-            return musicas
-    except Exception as e:
-        print(f"Erro ao ler histórico: {e}")
+def formatar_hora_falada(agora):
+    h = agora.hour
+    m = agora.minute
+    texto_hora = f"{h} horas" if h != 1 else "1 hora"
+    if m == 0:
+        return f"{texto_hora} em ponto"
+    elif m == 1:
+        return f"{texto_hora} e 1 minuto"
+    else:
+        return f"{texto_hora} e {m} minutos"
 
-    try:
-        resp = requests.get(STREAM_URL, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-        limpo = re.sub('<[^<]+?>', '', resp.text).strip()
-        partes = limpo.split(",")
-        musica = ",".join(partes[6:]).strip()
-        return musica if musica else "a nossa seleção especial"
-    except Exception:
-        return "o melhor do reggae"
+def escolher_roteiro_maya(agora):
+    hora_str = formatar_hora_falada(agora)
+    
+    falas = {
+        "1": f"Beleza, galera do reggae! Agora são {hora_str}. Sou Maya Roots e, a partir de agora, vamos juntinhos eu daqui e você daí, comandando o programa Disco Reggae que hoje está recheado de pedras pra você curtir! Participe junto com a gente através do nosso site: www ponto clube do reggae ponto com ponto br. E também no RádiosNet: na barra de pesquisa, é só digitar Rádio Clube do Reggae FM e clicar em cima do ícone para ouvir nossa programação! Então vamos lá iniciar nosso Disco Reggae de hoje, trazendo a primeira sequência de pedras!",
+        "2": f"Eita maravilha! Já são {hora_str} e nossa primeira sequência de hoje veio com tudo... curtimos aí só pedras de responsa! E já aproveito para mandar um beijo especial a todos que estão ligadinhos com a gente em qualquer lugar do Brasil e do mundo. Abraçar a galera ligada no Conexão Jamaica lá em Teresina, no Piauí, e a galera de Pato Branco, no Paraná... cheiro da Maya Roots pra vocês! Então, vamos com o segundo bloco de hoje!",
+        "3": f"Que maravilha, já estamos de volta aqui no Disco Reggae, agora são {hora_str}! E que sequência de pedras, hein? Me diz aí o que achou... demais, né?! Eu achei top demais, só regaço de primeira! Aqui no Disco Reggae é assim, e se tiver Maya Roots no comando aí fica completo! Em breve estarei liberando o WhatsApp pra galera participar... fica ligado nas novidades que logo estarão disponíveis aí pra você, regueiro e regueira que está ligadinho com a gente. Mas vamos deixar de papo e vamos de pedras pra essa galera linda que está ouvindo nosso programa Disco Reggae!",
+        "4": f"Opa! Já de volta aqui com o Disco Reggae na minha, na sua Rádio Clube do Reggae FM! Agora são {hora_str} e ficaremos juntinhos até as cinco da tarde, tocando só o melhor do ritmo da Jamaica pra você. E quero sua participação através do site da rádio: www ponto clube do reggae ponto com ponto br! Em breve também estará disponível no aplicativo para Android e iPhone. Mas é hora de reggae pra galera, né? Já falamos demais! Chegando mais cinco pedras e já estarei de volta!"
+    }
+
+    # Entre 11h45 e 12h25 usa a Fala 1 (Abertura do programa)
+    if (agora.hour == 11 and agora.minute >= 45) or (agora.hour == 12 and agora.minute <= 25):
+        return falas["1"], "Fala 1 (Abertura)"
+    
+    # Nos demais horários do programa (12h26 às 16h59), alterna entre as Falas 2, 3 e 4
+    escolha = random.choice(["2", "3", "4"])
+    return falas[escolha], f"Fala {escolha}"
 
 async def criar_audio(texto, voz, arquivo_saida):
     communicate = edge_tts.Communicate(texto, voz)
@@ -68,7 +52,7 @@ def atualizar_ftp(arquivo_local, nome_novo):
     ftp.set_pasv(True)
     ftp.cwd("locutor")
     
-    # Apaga qualquer áudio antigo da pasta para o AutoDJ nunca repetir fala velha
+    # Apaga qualquer áudio antigo da pasta
     for arq in ftp.nlst():
         if arq.endswith(".mp3"):
             try:
@@ -83,7 +67,7 @@ def atualizar_ftp(arquivo_local, nome_novo):
 
 @app.route("/")
 def home():
-    return "Maya Roots Online!"
+    return "OK"
 
 @app.route("/gerar")
 def gerar_locucao():
@@ -92,16 +76,10 @@ def gerar_locucao():
     dia_semana = agora.weekday() # 0=Seg a 4=Sex
     hora = agora.hour
 
-    # Somente Segunda a Sexta, das 12h às 16h59 (Programa Disco Reggae)
-    if dia_semana <= 4 and (12 <= hora < 17):
-        sequencia = pegar_ultimas_musicas()
+    # Somente Segunda a Sexta, das 11h45 às 16h59
+    if dia_semana <= 4 and ((hora == 11 and agora.minute >= 45) or (12 <= hora < 17)):
+        roteiro, qual_fala = escolher_roteiro_maya(agora)
         voz = "pt-BR-FranciscaNeural"
-        frases = [
-            f"Aqui é Maya Roots no Disco Reggae, pela Clube do Reggae! Você curtiu na nossa sequência: {sequencia}. E o som não para!",
-            f"Você está no Disco Reggae com Maya Roots, na Clube do Reggae! Passaram por aqui: {sequencia}. Continue sintonizado!",
-            f"Disco Reggae no ar pela Clube do Reggae! Eu sou Maya Roots e você acabou de ouvir: {sequencia}. Fique ligado!"
-        ]
-        roteiro = random.choice(frases)
         
         carimbo = agora.strftime("%H%M%S")
         arquivo_mp3 = f"maya_{carimbo}.mp3"
@@ -115,11 +93,11 @@ def gerar_locucao():
         if os.path.exists(arquivo_mp3):
             os.remove(arquivo_mp3)
             
-        return f"Sucesso! [Maya Roots - Disco Reggae] Sequência lida: {sequencia}"
+        return f"OK: Maya Roots ({qual_fala})"
 
-    # Fora do horário da Maya Roots -> limpa a pasta e fica em silêncio
+    # Fora do horário -> limpa a pasta
     atualizar_ftp(None, None)
-    return "Fora do horário da Maya Roots (12h às 17h Seg-Sex). Pasta limpa!"
+    return "OK: Fora do horario"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
